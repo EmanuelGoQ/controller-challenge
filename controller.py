@@ -68,3 +68,36 @@ def run_cycle(state: dict) -> dict:
     record["latencia_alb_promedio_ms"] = (
         round(latencia_alb * 1000, 2) if latencia_alb is not None else None
     )
+
+
+    # 2. ---------- FILTRAR instancias en warm-up ----------
+
+    instancias_validas = []
+    instancias_en_warmup_actual = []
+
+    for inst in instancias:
+        instance_id = inst["instance_id"]
+        es_healthy = salud.get(instance_id) == "healthy"
+
+        if sm.is_instance_warm(state, instance_id, es_healthy, config.WARMUP_GRACE_SECONDS):
+            if instance_id in state["instancias_en_warmup"]:
+                sm.remove_instance_from_warmup(state, instance_id)
+                logger.info("Instancia %s completo su warm-up, entra al analisis.", instance_id)
+            instancias_validas.append(instance_id)
+        else:
+            instancias_en_warmup_actual.append(instance_id)
+
+    record["instancias_validas_para_decision"] = instancias_validas
+    record["instancias_en_warmup"] = instancias_en_warmup_actual
+    capacidad_actual = len(instancias)  # capacidad total incluye las en warm-up
+    record["capacidad_actual"] = capacidad_actual
+
+    if not instancias_validas:
+        record.update({
+            "decision": "MAINTAIN_CAPACITY",
+            "justificacion": "Todas las instancias estan en warm-up; sin datos confiables aun.",
+            "accion_solicitada": "NONE",
+            "resultado_accion": "N/A",
+        })
+        log_decision(record)
+        return state
