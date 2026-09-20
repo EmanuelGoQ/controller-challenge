@@ -136,3 +136,39 @@ def run_cycle(state: dict) -> dict:
         and all(dp["valor"] < config.CPU_LOWER_THRESHOLD for dp in ultimas_n_bajada)
         and capacidad_actual > config.MIN_INSTANCES
     )
+
+
+    # 4. ------------ DECIDIR (respetando cooldown) ------------
+
+    en_cooldown, restante = sm.is_in_cooldown(state, config.COOLDOWN_SECONDS)
+
+    if en_cooldown:
+        decision = "MAINTAIN_CAPACITY"
+        justificacion = (
+            f"En cooldown desde la ultima accion ({state['ultima_accion_tipo']}); "
+            f"faltan {int(restante)}s para poder volver a actuar."
+        )
+    elif condicion_sobrecarga:
+        decision = "INCREASE_CAPACITY"
+        justificacion = (
+            f"CPU promedio de la flota > {config.CPU_UPPER_THRESHOLD}% en "
+            f"{config.SCALE_UP_CONSECUTIVE_EVALS} evaluaciones consecutivas: "
+            f"{[dp['valor'] for dp in ultimas_n_subida]}"
+        )
+    elif condicion_subutilizacion:
+        decision = "REDUCE_CAPACITY"
+        justificacion = (
+            f"CPU promedio de la flota < {config.CPU_LOWER_THRESHOLD}% sostenida en "
+            f"{config.SCALE_DOWN_CONSECUTIVE_EVALS} evaluaciones consecutivas: "
+            f"{[dp['valor'] for dp in ultimas_n_bajada]}"
+        )
+    else:
+        decision = "MAINTAIN_CAPACITY"
+        justificacion = (
+            f"CPU promedio actual ({round(cpu_promedio_flota, 2)}%) dentro de la "
+            f"zona muerta [{config.CPU_LOWER_THRESHOLD}, {config.CPU_UPPER_THRESHOLD}] "
+            f"o la condicion aun no es sostenida en la ventana requerida."
+        )
+
+    record["decision"] = decision
+    record["justificacion"] = justificacion
