@@ -101,3 +101,38 @@ def run_cycle(state: dict) -> dict:
         })
         log_decision(record)
         return state
+
+    # 3. ----------- ANALIZAR -----------
+
+    valores_validos = [cpu_por_instancia[i] for i in instancias_validas if i in cpu_por_instancia]
+
+    if not valores_validos:
+        record.update({
+            "decision": "MAINTAIN_CAPACITY",
+            "justificacion": "Instancias validas sin datapoints de CPU disponibles aun.",
+            "accion_solicitada": "NONE",
+            "resultado_accion": "N/A",
+        })
+        log_decision(record)
+        return state
+
+    cpu_promedio_flota = sum(valores_validos) / len(valores_validos)
+    sm.push_cpu_datapoint(state, cpu_promedio_flota, config.HISTORY_WINDOW_SIZE)
+
+    ultimas_n_subida = sm.last_n(state, config.SCALE_UP_CONSECUTIVE_EVALS)
+    ultimas_n_bajada = sm.last_n(state, config.SCALE_DOWN_CONSECUTIVE_EVALS)
+
+    record["cpu_promedio_flota"] = round(cpu_promedio_flota, 2)
+    record["ventana_evaluada_subida"] = ultimas_n_subida
+    record["ventana_evaluada_bajada"] = ultimas_n_bajada
+
+    condicion_sobrecarga = (
+        len(ultimas_n_subida) == config.SCALE_UP_CONSECUTIVE_EVALS
+        and all(dp["valor"] > config.CPU_UPPER_THRESHOLD for dp in ultimas_n_subida)
+        and capacidad_actual < config.MAX_INSTANCES
+    )
+    condicion_subutilizacion = (
+        len(ultimas_n_bajada) == config.SCALE_DOWN_CONSECUTIVE_EVALS
+        and all(dp["valor"] < config.CPU_LOWER_THRESHOLD for dp in ultimas_n_bajada)
+        and capacidad_actual > config.MIN_INSTANCES
+    )
