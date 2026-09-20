@@ -172,3 +172,88 @@ def run_cycle(state: dict) -> dict:
 
     record["decision"] = decision
     record["justificacion"] = justificacion
+
+    # 5. ------------- ACTUAR -------------
+
+    if decision == "MAINTAIN_CAPACITY":
+        record["accion_solicitada"] = "NONE"
+        record["resultado_accion"] = "N/A"
+        log_decision(record)
+        return state
+
+    try:
+        if decision == "INCREASE_CAPACITY":
+            record["accion_solicitada"] = "run_instances + register_targets"
+            nueva_instancia_id = aws.launch_instance()
+            aws.register_target(nueva_instancia_id)
+            sm.add_instance_to_warmup(state, nueva_instancia_id)
+            record["resultado_accion"] = f"OK - instancia lanzada: {nueva_instancia_id}"
+
+        elif decision == "REDUCE_CAPACITY":
+            candidata = min(
+                ((i, cpu_por_instancia[i]) for i in instancias_validas if i in cpu_por_instancia),
+                key=lambda par: par[1],
+            )[0]
+
+            record["accion_solicitada"] = f"deregister_targets + terminate_instances ({candidata})"
+            aws.deregister_target(candidata)
+            aws.wait_for_drain(candidata, config.TARGET_DEREGISTRATION_DRAIN_SECONDS)
+            aws.terminate_instance(candidata)
+            record["resultado_accion"] = f"OK - instancia terminada: {candidata}"
+
+        sm.register_action(state, decision)
+        state["fallos_consecutivos_accion"] = 0
+
+    except Exception as e:
+        state["fallos_consecutivos_accion"] += 1
+        logger.error("Fallo al ejecutar la accion %s: %s", decision, e)
+        record["resultado_accion"] = f"FALLO: {e}"
+        record["justificacion"] += (
+            " | La decision se tomo pero la ejecucion fallo; no se activa "
+            "cooldown para permitir reintento en el proximo ciclo."
+        )
+        # Deliberadamente NO se llama a sm.register_action(): si la accion
+        # fallo, no queremos entrar en cooldown como si hubiera tenido efecto.
+
+        if state["fallos_consecutivos_accion"] >= config.MAX_CONSECUTIVE_ACTION_FAILURES:
+            logger.critical(
+                "%d fallos consecutivos ejecutando acciones. Revisar permisos "
+                "IAM, cuotas de la cuenta o estado del Target Group.",
+                state["fallos_consecutivos_accion"],
+            )
+
+    log_decision(record)
+    return state
+
+
+def main():
+    setup_logging()
+    logger.info("Auto-Scaling Controller iniciado.")
+    logger.info(
+        "Politica: CPU_UPPER=%.1f%% CPU_LOWER=%.1f%% cooldown=%ds warmup_grace=%ds "
+        "min=%d max=%d",
+        config.CPU_UPPER_THRESHOLD, config.CPU_LOWER_THRESHOLD,
+        config.COOLDOWN_SECONDS, config.WARMUP_GRACE_SECONDS,
+        config.MIN_INSTANCES, config.MAX_INSTANCES,
+    )
+
+    state = sm.load_state(config.STATE_FILE_PATH)
+
+    while True:
+        inicio_ciclo = time.time()
+        try:
+            state = run_cycle(state)
+        except Exception as e:
+            # ultima red de seguridad: un error no previsto en el ciclo
+            # jamas debe matar el proceso del controlador
+            logger.exception("Error no manejado en el ciclo: %s", e)
+        finally:
+            sm.save_state(config.STATE_FILE_PATH, state)
+
+        duracion = time.time() - inicio_ciclo
+        espera = max(0, config.EVALUATION_INTERVAL_SECONDS - duracion)
+        time.sleep(espera)
+
+
+if __name__ == "__main__":
+    main()
