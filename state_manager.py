@@ -81,13 +81,24 @@ def remove_instance_from_warmup(state, instance_id):
 def is_instance_warm(state, instance_id, is_healthy, warmup_grace_seconds):
     """Una instancia se considera 'caliente' (su CPU es confiable para
     decisiones) cuando el ALB la marca healthy Y ademas paso el periodo de
-    gracia adicional desde que fue registrada como en warm-up."""
+    gracia adicional desde que fue registrada como en warm-up.
+
+    IMPORTANTE: si la instancia no esta siendo trackeada como 'nueva' (no
+    aparece en instancias_en_warmup), NO se asume automaticamente que es
+    valida: se exige que este healthy en el ALB en este mismo momento. La
+    version anterior devolvia True incondicionalmente en ese caso, bajo el
+    supuesto de que una instancia 'desconocida' siempre es una instancia
+    pre-existente ya sana. Ese supuesto es falso cuando una instancia queda
+    huerfana por un fallo parcial durante INCREASE_CAPACITY (lanzada pero
+    nunca registrada en el Target Group): sin este chequeo, esa instancia
+    huerfana se cuela en el analisis de CPU y puede incluso terminar
+    seleccionada como candidata de REDUCE_CAPACITY, arriesgando la
+    terminacion de una instancia sana en su lugar."""
     launched_at = state["instancias_en_warmup"].get(instance_id)
     if launched_at is None:
-        # no la conocemos como "nueva": se asume que ya paso su warm-up
-        # (por ejemplo, instancias que ya existian antes de que el
-        # controlador arrancara)
-        return True
+        # no la conocemos como "nueva" en warm-up, pero de todas formas debe
+        # estar realmente healthy en el ALB ahora mismo para ser valida
+        return is_healthy
 
     if not is_healthy:
         return False
