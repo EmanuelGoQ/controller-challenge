@@ -1,7 +1,7 @@
 import time
 import logging
 import boto3
-from botocore.exceptions import ClientError, BotoCoreError
+from botocore.exceptions import ClientError, BotoCoreError, WaiterError
 
 import config
 
@@ -166,7 +166,15 @@ def get_alb_target_response_time(lookback_minutes, period_seconds):
 # ---------------------------------------------------------------------------
 
 def launch_instance():
-    """Lanza una nueva instancia a partir del Launch Template configurado."""
+    """Lanza una nueva instancia a partir del Launch Template configurado y
+    espera activamente a que EC2 reporte su estado como 'running' antes de
+    retornar. Esto es necesario porque la API de Target Groups (ELBv2)
+    rechaza con 'InvalidTarget' el registro de una instancia que todavia
+    esta en estado 'pending' (run_instances retorna casi de inmediato, pero
+    el arranque real de la VM toma varios segundos mas). Sin esta espera,
+    register_target() puede fallar por una condicion de carrera, dejando
+    una instancia 'huerfana': lanzada, facturando, pero nunca incorporada
+    al Target Group ni al seguimiento de warm-up del controlador."""
     response = _with_retries(
         ec2.run_instances,
         LaunchTemplate={"LaunchTemplateId": config.LAUNCH_TEMPLATE_ID},
@@ -183,7 +191,24 @@ def launch_instance():
         }],
     )
     instance_id = response["Instances"][0]["InstanceId"]
-    logger.info("Instancia lanzada: %s", instance_id)
+    logger.info("Instancia lanzada: %s, esperando estado 'running'...", instance_id)
+
+    try:
+        waiter = ec2.get_waiter("instance_running")
+        waiter.wait(
+            InstanceIds=[instance_id],
+            WaiterConfig={"Delay": 5, "MaxAttempts": 24},  # hasta ~2 min
+        )
+        logger.info("Instancia %s confirmada como 'running'.", instance_id)
+    except WaiterError as e:
+        # Si la instancia no llega a 'running' a tiempo, propagamos el error
+        # para que el ciclo lo trate como fallo de accion (mismo camino que
+        # cualquier otro fallo de ACTUAR: no se activa cooldown y se
+        # reintenta en el proximo ciclo). No intentamos registrar un target
+        # que sabemos que sera rechazado.
+        logger.error("Instancia %s no alcanzo 'running' a tiempo: %s", instance_id, e)
+        raise
+
     return instance_id
 
 
