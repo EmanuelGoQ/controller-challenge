@@ -8,13 +8,13 @@ Type=simple
 # Ajustar User y WorkingDirectory segun donde se despliegue el proyecto
 # en la instancia controladora.
 User=ec2-user
-WorkingDirectory=/home/ec2-user/autoscaling-controller
-EnvironmentFile=/home/ec2-user/autoscaling-controller/.env
-ExecStart=/usr/bin/python3 /home/ec2-user/autoscaling-controller/controller.py
+WorkingDirectory=/home/ec2-user/controller-challenge
+EnvironmentFile=/home/ec2-user/controller-challenge/.env
+ExecStart=/usr/bin/python3 /home/ec2-user/controller-challenge/controller.py
 Restart=on-failure
 RestartSec=10
-StandardOutput=append:/home/ec2-user/autoscaling-controller/logs/systemd.log
-StandardError=append:/home/ec2-user/autoscaling-controller/logs/systemd.log
+StandardOutput=append:/home/ec2-user/controller-challenge/logs/systemd.log
+StandardError=append:/home/ec2-user/controller-challenge/logs/systemd.log
 
 [Install]
 WantedBy=multi-user.target
