@@ -1,3 +1,34 @@
+"""
+config.py
+
+Centraliza toda la configuracion del controlador: credenciales/recursos de AWS
+(via variables de entorno, nunca hardcodeadas) y los parametros de la politica
+de decision (umbrales, ventanas, cooldown, warm-up).
+
+Justificacion de cada parametro (para el documento de diseno, Seccion 8 del reto):
+
+- CPU_UPPER_THRESHOLD / CPU_LOWER_THRESHOLD: banda de histeresis [30,70].
+  Cualquier valor dentro de esta banda se considera "zona muerta" y no dispara
+  ninguna accion, evitando oscilaciones (ver Al-Dhuraibi et al., 2018,
+  seccion 2.2.4, "Static thresholds").
+
+- SCALE_UP_CONSECUTIVE_EVALS vs SCALE_DOWN_CONSECUTIVE_EVALS: asimetria
+  deliberada. Reaccionar rapido a la sobrecarga (2 evaluaciones ~2 min)
+  protege la disponibilidad; reaccionar lento a la subutilizacion
+  (5 evaluaciones ~5 min) evita remover capacidad ante caidas transitorias
+  de trafico (ver requisito 8 del reto: "no poner en riesgo la disponibilidad").
+
+- COOLDOWN_SECONDS: periodo de silencio tras cualquier accion, para dar
+  tiempo a que la metrica de CPU refleje el efecto real del cambio de
+  capacidad antes de tomar una nueva decision (evita flapping).
+
+- WARMUP_GRACE_SECONDS: tiempo adicional tras que el ALB marca una instancia
+  como "healthy" antes de confiar en su metrica de CPU. Justificado por la
+  literatura de virtualizacion (VMware, Xen): el arranque de una VM y de los
+  procesos que corren dentro de ella no es instantaneo, por lo que la CPU
+  medida en los primeros segundos no representa carga real de trafico.
+"""
+
 import os
 from dotenv import load_dotenv
 
